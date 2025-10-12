@@ -3,6 +3,7 @@ import csv
 import logging
 import os
 import pathlib
+import re
 import shutil
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -42,6 +43,8 @@ AUTO_CAPTION_ALLOWLIST = {
     "zh-Hans",
     "zh-Hant",
 }
+
+_INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]+')
 
 
 def configure_logging(log_level: str = "INFO") -> None:
@@ -160,6 +163,16 @@ def write_summary_row(summary_path: pathlib.Path, row: List[str]) -> None:
         writer.writerow(row)
 
 
+def sanitize_filename(value: str) -> str:
+    cleaned = _INVALID_FILENAME_CHARS.sub("_", value)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return "output"
+    # Avoid trailing periods/spaces that some file systems dislike.
+    cleaned = cleaned.rstrip(" .")
+    return cleaned[:200]
+
+
 def determine_languages(info: Dict) -> List[str]:
     languages = set()
     for lang in (info.get("subtitles") or {}).keys():
@@ -223,7 +236,14 @@ def build_transcript(
         return None, []
 
     final_dir.mkdir(parents=True, exist_ok=True)
-    final_path = final_dir / f"{info.get('id', 'unknown')}.txt"
+    author = info.get("channel") or info.get("uploader") or "Unknown"
+    title = info.get("title") or "Unknown Title"
+    filename = sanitize_filename(f"YouTube - {author} - {title}") or "YouTube-Unknown"
+    final_path = final_dir / f"{filename}.txt"
+    counter = 1
+    while final_path.exists():
+        final_path = final_dir / f"{filename} ({counter}).txt"
+        counter += 1
 
     header = [
         f"Title: {info.get('title') or 'Unknown'}",
@@ -389,7 +409,10 @@ def main() -> None:
     output_dir = pathlib.Path(args.output_dir)
     cookie_path = pathlib.Path(args.cookie_file)
     urls_file = pathlib.Path(args.urls_file)
+    if not urls_file.is_absolute():
+        urls_file = output_dir / urls_file
     output_dir.mkdir(parents=True, exist_ok=True)
+    urls_file.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info("Fetching channel entries from %s", channel_url)
     entries = get_channel_video_entries(channel_url, cookie_path=cookie_path)
