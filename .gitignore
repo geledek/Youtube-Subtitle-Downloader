@@ -1,0 +1,35 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+build/
+dist/
+pip-wheel-metadata/
+.venv/
+venv/
+
+# IDE settings
+.idea/
+.vscode/
+
+# Runtime artifacts
+*.log
+*.tmp
+*.bak
+
+# Downloader outputs
+DanKoe/
+all-transcript-from-dankoe/
+playlist-*.txt
+transcripts_summary.csv
+*.vtt
+
+# Credentials
+cookies.txt
