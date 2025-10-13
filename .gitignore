@@ -27,7 +27,8 @@ venv/
 # Downloader outputs
 DanKoe/
 all-transcript-from-dankoe/
-playlist-*.txt
+all-transcript-from-*/
+*-list.txt
 transcripts_summary.csv
 *.vtt
 

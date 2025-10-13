@@ -31,27 +31,21 @@ When you are done, deactivate with `deactivate`.
 Run the downloader from this directory:
 
 ```bash
-python3 run_channel_downloader.py \
-  --channel-url "https://www.youtube.com/@DanKoeTalks/videos" \
-  --output-dir DanKoe \
-  --cookie-file cookies.txt \
-  --urls-file playlist-DanKoe.txt \
-  --limit 1 \
-  --log-level INFO
+python3 run_channel_downloader.py DanKoeTalks --limit 10 --log-level INFO
 ```
 
 ### Arguments
-- `--channel-url` *(default: Dan Koe channel)* – the channel “Videos” page to enumerate.
-- `--output-dir` *(default: `DanKoe`)* – folder for raw VTT files, transcripts, and summary CSV.
-- `--cookie-file` *(default: `cookies.txt`)* – passed to `yt-dlp` if present; omit or point to another file when not needed.
-- `--urls-file` *(default: `playlist-DanKoe.txt`)* – where the script writes the discovered video URLs.
-- `--limit` – optional cap on how many videos to process (omit to run the full channel).
-- `--log-level` – standard logging level (e.g., `INFO`, `DEBUG`).
+- `channel_name` *(required)* – the channel handle (with or without the leading `@`).
+- `--log-level` *(default: `INFO`)* – adjust verbosity (`DEBUG`, `WARNING`, etc.).
+- `--limit` *(default: `0`)* – cap how many videos to process; `0` means "download every video".
+- `--output-dir` – override the default output directory (`all-transcript-from-<channel>`).
+- `--cookie-file` – point to a different cookies export (default `./cookies.txt`).
+- `--urls-file` – override where the intermediate playlist file is written (default `<channel>-list.txt` inside the output directory).
 
 ## Output Structure
-- `<output-dir>/<video_id>/` – raw `.vtt` captions per processed video.
-- `<output-dir>/final/<video_id>.txt` – cleaned transcript with header (title, URL, upload date) + single-language body.
+- `<output-dir>/final/YouTube - <channel> - <title>.txt` – cleaned transcript with header (title, URL, upload date) + single-language body.
 - `<output-dir>/transcripts_summary.csv` – metadata summary: ID, title, URL, upload date, transcript path, languages downloaded.
+- `<output-dir>/<channel>-list.txt` – playlist of video URLs processed in the run.
 
 ## Notes
 - The script currently saves only the highest-priority subtitle language (English preferred). Adjust `determine_languages` in `run_channel_downloader.py` if you need multi-language transcripts again.

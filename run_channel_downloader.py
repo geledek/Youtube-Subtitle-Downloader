@@ -12,22 +12,6 @@ import yt_dlp
 
 from vtt2txt import process as vtt_to_txt
 
-# ==================== 配置区 (请在这里修改) ====================
-
-# 1. 填入你想要下载的 YouTube 频道的 "Videos" 页面 URL (默认值，可通过命令行覆盖)
-DEFAULT_CHANNEL_URL = "https://www.youtube.com/@DanKoeTalks/videos"
-
-# 2. 定义存放最终字幕文件的输出文件夹名
-DEFAULT_OUTPUT_DIR = "DanKoe"
-
-# 3. 定义 Cookies 文件名 (用于登录验证)
-DEFAULT_COOKIE_FILE = "cookies.txt"
-
-# 4. 定义临时存放 URL 列表的文件名 (脚本会自动创建和覆盖)
-DEFAULT_URLS_FILE = "playlist-DanKoe.txt"
-
-# =============================================================
-
 logger = logging.getLogger("channel_downloader")
 
 AUTO_CAPTION_ALLOWLIST = {
@@ -171,6 +155,25 @@ def sanitize_filename(value: str) -> str:
     # Avoid trailing periods/spaces that some file systems dislike.
     cleaned = cleaned.rstrip(" .")
     return cleaned[:200]
+
+
+def normalize_channel_name(name: str) -> str:
+    slug = name.strip()
+    if not slug:
+        raise ValueError("Channel name cannot be empty.")
+    if slug.startswith("@"):
+        slug = slug[1:]
+    return slug
+
+
+def cleanup_intermediate_dir(directory: pathlib.Path) -> None:
+    if not directory.exists():
+        return
+    try:
+        shutil.rmtree(directory)
+        logger.debug("Removed intermediate directory %s", directory)
+    except Exception as exc:  # pragma: no cover - filesystem variance
+        logger.warning("Unable to remove intermediate directory %s: %s", directory, exc)
 
 
 def determine_languages(info: Dict) -> List[str]:
@@ -368,34 +371,39 @@ def process_single_video(
     else:
         logger.warning("Skipping summary entry for %s due to missing transcript", video_url)
 
+    cleanup_intermediate_dir(video_dir)
+
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download YouTube subtitles and build transcripts.")
-    parser.add_argument(
-        "--channel-url",
-        default=DEFAULT_CHANNEL_URL,
-        help="YouTube channel Videos URL to scrape.",
+    parser = argparse.ArgumentParser(
+        description="Download YouTube subtitles and build transcripts from a channel."
     )
     parser.add_argument(
-        "--output-dir",
-        default=DEFAULT_OUTPUT_DIR,
-        help="Directory to store downloads and transcripts.",
+        "channel_name",
+        help="Channel handle (with or without leading @).",
     )
-    parser.add_argument(
-        "--cookie-file",
-        default=DEFAULT_COOKIE_FILE,
-        help="Cookies file passed to yt-dlp for authenticated requests.",
-    )
-    parser.add_argument(
-        "--urls-file",
-        default=DEFAULT_URLS_FILE,
-        help="Path to write the intermediate list of video URLs.",
-    )
-    parser.add_argument("--limit", type=int, default=None, help="Process only the first N videos.")
     parser.add_argument(
         "--log-level",
         default=os.getenv("CHANNEL_DL_LOG_LEVEL", "INFO"),
         help="Logging level (default: INFO).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Process only the first N videos (0 means no limit).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="Optional destination directory for transcripts (defaults to all-transcript-from-<channel>).",
+    )
+    parser.add_argument(
+        "--cookie-file",
+        help="Optional cookies file path (defaults to ./cookies.txt).",
+    )
+    parser.add_argument(
+        "--urls-file",
+        help="Optional path for the intermediate playlist file (defaults to <channel>-list.txt inside the output dir).",
     )
     return parser.parse_args()
 
@@ -404,25 +412,43 @@ def main() -> None:
     args = parse_args()
     configure_logging(args.log_level)
 
-    logger.info("Starting YouTube channel subtitle downloader")
-    channel_url = args.channel_url
-    output_dir = pathlib.Path(args.output_dir)
-    cookie_path = pathlib.Path(args.cookie_file)
-    urls_file = pathlib.Path(args.urls_file)
-    if not urls_file.is_absolute():
-        urls_file = output_dir / urls_file
+    try:
+        channel_slug = normalize_channel_name(args.channel_name)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return
+    channel_url = f"https://www.youtube.com/@{channel_slug}/videos"
+
+    output_dir = pathlib.Path(args.output_dir) if args.output_dir else pathlib.Path(
+        f"all-transcript-from-{channel_slug}"
+    )
+    cookie_path = pathlib.Path(args.cookie_file) if args.cookie_file else pathlib.Path(
+        "cookies.txt"
+    )
+
+    if args.urls_file:
+        urls_file = pathlib.Path(args.urls_file)
+        if not urls_file.is_absolute():
+            urls_file = output_dir / urls_file
+    else:
+        urls_file = output_dir / f"{channel_slug}-list.txt"
+
     output_dir.mkdir(parents=True, exist_ok=True)
     urls_file.parent.mkdir(parents=True, exist_ok=True)
 
+    logger.info(
+        "Starting YouTube channel subtitle downloader for @%s", channel_slug
+    )
     logger.info("Fetching channel entries from %s", channel_url)
     entries = get_channel_video_entries(channel_url, cookie_path=cookie_path)
     if not entries:
         logger.error("No entries retrieved; exiting.")
         return
 
-    if args.limit:
-        entries = entries[: args.limit]
-        logger.info("Limiting processing to the first %s videos", args.limit)
+    limit = args.limit if args.limit and args.limit > 0 else None
+    if limit:
+        entries = entries[:limit]
+        logger.info("Limiting processing to the first %s videos", limit)
 
     with open(urls_file, "w", encoding="utf-8") as fh:
         for entry in entries:
