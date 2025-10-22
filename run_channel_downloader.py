@@ -429,12 +429,28 @@ def filter_new_videos(entries: List[Dict], existing_ids: set) -> List[Dict]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download YouTube subtitles from a channel or single video."
+        description="Download YouTube subtitles from a channel or single video.",
+        epilog="Examples:\n"
+               "  %(prog)s -c DanKoeTalks --limit 10\n"
+               "  %(prog)s -v https://youtube.com/watch?v=abc123\n"
+               "  %(prog)s -c ChannelName --full",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "channel_name",
-        nargs="?",
+        "-c", "--channel",
+        dest="channel_name",
         help="Channel handle (with or without leading @).",
+    )
+    parser.add_argument(
+        "-v", "--video",
+        dest="video_url",
+        help="Download subtitles from a single video URL.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Process only the first N videos from channel (default: 0 = no limit).",
     )
     parser.add_argument(
         "--log-level",
@@ -442,26 +458,16 @@ def parse_args() -> argparse.Namespace:
         help="Logging level (default: INFO).",
     )
     parser.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Process only the first N videos (0 means no limit).",
-    )
-    parser.add_argument(
         "--output-dir",
-        help="Optional destination directory for subtitles (defaults to from-channel-<channel>).",
+        help="Destination directory for subtitles (defaults to from-channel-<channel>).",
     )
     parser.add_argument(
         "--cookie-file",
-        help="Optional cookies file path (defaults to ./cookies.txt).",
+        help="Path to cookies.txt file (default: ./cookies.txt).",
     )
     parser.add_argument(
         "--urls-file",
-        help="Optional path for the intermediate playlist file (defaults to <channel>-list.txt inside the output dir).",
-    )
-    parser.add_argument(
-        "--video-url",
-        help="Download subtitles from a single video instead of entire channel.",
+        help="Path for the intermediate playlist file (defaults to <channel>-list.txt).",
     )
     parser.add_argument(
         "--full",
@@ -495,7 +501,7 @@ def main() -> None:
             logger.info("Extracting channel name from video metadata...")
             channel_name = get_channel_from_video(args.video_url, cookie_path=cookie_path)
             if not channel_name:
-                logger.error("Could not determine channel name. Please provide --channel-name.")
+                logger.error("Could not determine channel name. Please provide -c/--channel.")
                 return
             channel_slug = sanitize_filename(channel_name)
             logger.info("Detected channel: %s", channel_slug)
@@ -525,7 +531,7 @@ def main() -> None:
 
     # Channel mode
     if not args.channel_name:
-        logger.error("Either channel_name or --video-url must be provided.")
+        logger.error("Either -c/--channel or -v/--video must be provided.")
         return
 
     try:

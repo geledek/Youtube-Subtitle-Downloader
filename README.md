@@ -20,7 +20,7 @@ uv pip install yt-dlp
 
 With `uv`, you can run commands directly without activating:
 ```bash
-uv run python3 run_channel_downloader.py DanKoeTalks --limit 10
+uv run python3 run_channel_downloader.py -c DanKoeTalks --limit 10
 ```
 
 **Option 2: Using standard Python venv**
@@ -50,13 +50,16 @@ By default, the script operates in **incremental mode**, downloading only new vi
 
 ```bash
 # Using uv (no activation needed)
-uv run python3 run_channel_downloader.py DanKoeTalks --limit 10 --log-level INFO
+uv run python3 run_channel_downloader.py -c DanKoeTalks --limit 10
 
 # Or with activated venv
-python3 run_channel_downloader.py DanKoeTalks --limit 10 --log-level INFO
+python3 run_channel_downloader.py -c DanKoeTalks --limit 10
 
 # Second run - only downloads new videos since last run
-uv run python3 run_channel_downloader.py DanKoeTalks
+uv run python3 run_channel_downloader.py -c DanKoeTalks
+
+# Download all videos (no limit)
+uv run python3 run_channel_downloader.py -c @ChannelName
 ```
 
 ### Download from a Single Video
@@ -65,10 +68,10 @@ Download subtitles from a single video and add it to the channel's output folder
 
 ```bash
 # With channel name specified
-uv run python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc123" --channel-name DanKoeTalks
+uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123" -c DanKoeTalks
 
 # Auto-detect channel from video metadata
-uv run python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc123"
+uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123"
 ```
 
 ### Force Full Re-download
@@ -76,18 +79,18 @@ uv run python3 run_channel_downloader.py --video-url "https://youtube.com/watch?
 Use `--full` to re-download all videos, ignoring existing subtitles:
 
 ```bash
-uv run python3 run_channel_downloader.py DanKoeTalks --full
+uv run python3 run_channel_downloader.py -c DanKoeTalks --full
 ```
 
 ### Arguments
-- `channel_name` – the channel handle (with or without the leading `@`). Required for channel mode, optional for single video mode.
-- `--video-url` – download subtitles from a single video instead of entire channel.
-- `--log-level` *(default: `INFO`)* – adjust verbosity (`DEBUG`, `WARNING`, etc.).
-- `--limit` *(default: `0`)* – cap how many videos to process; `0` means "download every video" (channel mode only).
-- `--output-dir` – override the default output directory (`from-channel-<channel>`).
-- `--cookie-file` – point to a different cookies export (default `./cookies.txt`).
-- `--urls-file` – override where the intermediate playlist file is written (default `<channel>-list.txt` inside the output directory).
-- `--full` – force full re-download of all videos, ignoring existing subtitles (channel mode only).
+- `-c`, `--channel` – Channel handle (with or without the leading `@`). Required for channel mode, optional for single video mode.
+- `-v`, `--video` – Download subtitles from a single video URL instead of entire channel.
+- `--limit N` *(default: 0)* – Process only the first N videos from channel. `0` means no limit (download all videos).
+- `--log-level` *(default: INFO)* – Adjust verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`.
+- `--output-dir` – Override the default output directory (`from-channel-<channel>`).
+- `--cookie-file` – Path to cookies.txt file (default: `./cookies.txt`).
+- `--urls-file` – Path for the intermediate playlist file (default: `<channel>-list.txt`).
+- `--full` – Force full re-download of all videos, ignoring existing subtitles (channel mode only).
 
 ## Output Structure
 
