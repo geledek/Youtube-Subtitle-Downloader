@@ -72,6 +72,9 @@ uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123"
 
 # Auto-detect channel from video metadata
 uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123"
+
+# Print subtitles to stdout instead of saving to file (single video only)
+uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123" -p
 ```
 
 ### Force Full Re-download
@@ -85,6 +88,7 @@ uv run python3 run_channel_downloader.py -c DanKoeTalks --full
 ### Arguments
 - `-c`, `--channel` – Channel handle (with or without the leading `@`). Required for channel mode, optional for single video mode.
 - `-v`, `--video` – Download subtitles from a single video URL instead of entire channel.
+- `-p`, `--print` – Print subtitle to stdout instead of saving to file. Only works with single video mode (`-v`).
 - `--limit N` *(default: 0)* – Process only the first N videos from channel. `0` means no limit (download all videos).
 - `--log-level` *(default: INFO)* – Adjust verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`.
 - `--output-dir` – Override the default output directory (`from-channel-<channel>`).
