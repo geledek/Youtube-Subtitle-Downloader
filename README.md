@@ -20,7 +20,7 @@ uv pip install yt-dlp
 
 With `uv`, you can run commands directly without activating:
 ```bash
-uv run python3 run_channel_downloader.py -c DanKoeTalks --limit 10
+uv run python3 run_downloader.py -c DanKoeTalks --limit 10
 ```
 
 **Option 2: Using standard Python venv**
@@ -50,16 +50,16 @@ By default, the script operates in **incremental mode**, downloading only new vi
 
 ```bash
 # Using uv (no activation needed)
-uv run python3 run_channel_downloader.py -c DanKoeTalks --limit 10
+uv run python3 run_downloader.py -c DanKoeTalks --limit 10
 
 # Or with activated venv
-python3 run_channel_downloader.py -c DanKoeTalks --limit 10
+python3 run_downloader.py -c DanKoeTalks --limit 10
 
 # Second run - only downloads new videos since last run
-uv run python3 run_channel_downloader.py -c DanKoeTalks
+uv run python3 run_downloader.py -c DanKoeTalks
 
 # Download all videos (no limit)
-uv run python3 run_channel_downloader.py -c @ChannelName
+uv run python3 run_downloader.py -c @ChannelName
 ```
 
 ### Download from a Single Video
@@ -68,13 +68,13 @@ Download subtitles from a single video and add it to the channel's output folder
 
 ```bash
 # With channel name specified
-uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123" -c DanKoeTalks
+uv run python3 run_downloader.py -v "https://youtube.com/watch?v=abc123" -c DanKoeTalks
 
 # Auto-detect channel from video metadata
-uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123"
+uv run python3 run_downloader.py -v "https://youtube.com/watch?v=abc123"
 
 # Print subtitles to stdout instead of saving to file (single video only)
-uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123" -p
+uv run python3 run_downloader.py -v "https://youtube.com/watch?v=abc123" -p
 ```
 
 ### Force Full Re-download
@@ -82,7 +82,7 @@ uv run python3 run_channel_downloader.py -v "https://youtube.com/watch?v=abc123"
 Use `--full` to re-download all videos, ignoring existing subtitles:
 
 ```bash
-uv run python3 run_channel_downloader.py -c DanKoeTalks --full
+uv run python3 run_downloader.py -c DanKoeTalks --full
 ```
 
 ### Arguments
@@ -115,7 +115,7 @@ from-channel-<channel>/
 ## Notes
 - **Incremental downloads**: By default, the script tracks processed videos in `subtitles_summary.csv` and skips them on subsequent runs. Use `--full` to override this behavior.
 - **Single video mode**: Videos are added to the same `from-channel-<channel>/` structure and appended to the existing CSV.
-- The script currently saves only the highest-priority subtitle language (English preferred). Adjust `determine_languages` in `run_channel_downloader.py` if you need multi-language subtitles.
+- The script currently saves only the highest-priority subtitle language (English preferred). Adjust `determine_languages` in `run_downloader.py` if you need multi-language subtitles.
 - Hitting rate limits (HTTP 429) typically means YouTube is throttling requests. Re-run after a short pause or provide fresh cookies.
 
 ## Migration from Old Version
