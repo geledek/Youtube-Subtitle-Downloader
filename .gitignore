@@ -28,8 +28,10 @@ venv/
 DanKoe/
 all-transcript-from-dankoe/
 all-transcript-from-*/
+from-channel-*/
 *-list.txt
 transcripts_summary.csv
+subtitles_summary.csv
 *.vtt
 
 # Credentials
