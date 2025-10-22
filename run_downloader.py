@@ -274,6 +274,7 @@ def process_single_video(
     summary_path: pathlib.Path,
     *,
     cookie_path: pathlib.Path,
+    print_output: bool = False,
 ) -> None:
     video_url = entry["url"]
     logger.info("Processing video: %s", video_url)
@@ -350,6 +351,62 @@ def process_single_video(
         logger.warning("Expected download directory %s missing; creating manually", video_dir)
         video_dir.mkdir(parents=True, exist_ok=True)
 
+    # Handle print-to-stdout mode
+    if print_output:
+        vtt_files = sorted(video_dir.glob("*.vtt"))
+        if not vtt_files:
+            logger.warning("No subtitle files were downloaded for %s", video_url)
+        else:
+            # Convert VTT files to text
+            language_to_path: Dict[str, pathlib.Path] = {}
+            for vtt_file in vtt_files:
+                parts = vtt_file.stem.split(".")
+                lang = parts[-1] if len(parts) > 1 else "unknown"
+                language_to_path[lang] = vtt_file
+
+            subtitle_sections = []
+            for lang in collect_language_order(language_to_path.keys()):
+                vtt_path = language_to_path[lang]
+                try:
+                    vtt_to_txt(vtt_path)
+                except Exception as exc:
+                    logger.warning("Failed to convert %s: %s", vtt_path, exc)
+                    continue
+                txt_path = vtt_path.with_suffix(".txt")
+                if not txt_path.exists():
+                    logger.warning("Missing converted text for %s", vtt_path)
+                    continue
+                text_content = txt_path.read_text(encoding="utf-8").strip()
+                if not text_content:
+                    logger.debug("Skipping empty subtitle for %s", txt_path)
+                    continue
+                subtitle_sections.append((lang, text_content))
+
+            if not subtitle_sections:
+                logger.warning("All subtitles empty or unavailable for %s", video_url)
+            else:
+                # Format and print to stdout
+                author = info.get("channel") or info.get("uploader") or "Unknown"
+                header = [
+                    f"Title: {info.get('title') or 'Unknown'}",
+                    f"URL: {info.get('webpage_url') or video_url}",
+                    f"Upload Date: {format_upload_date(info.get('upload_date'))}",
+                ]
+                if info.get("channel"):
+                    header.append(f"Channel: {info['channel']}")
+
+                lines = header + [""]
+                for lang, text_content in subtitle_sections:
+                    lines.append(f"--- Subtitle ({lang}) ---")
+                    lines.append(text_content)
+                    lines.append("")
+
+                print("\n".join(lines).rstrip())
+
+        cleanup_intermediate_dir(video_dir)
+        return
+
+    # Normal file-saving mode
     final_dir = output_dir / "final"
     subtitle_path, languages = build_subtitle(info, video_dir, final_dir, video_url)
 
@@ -474,12 +531,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force full re-download of all videos, ignoring existing subtitles.",
     )
+    parser.add_argument(
+        "-p", "--print",
+        dest="print_output",
+        action="store_true",
+        help="Print subtitle to stdout instead of saving to file (single video mode only).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     configure_logging(args.log_level)
+
+    # Validate that -p/--print is only used with -v/--video
+    if args.print_output and not args.video_url:
+        logger.error("The -p/--print flag can only be used with -v/--video (single video mode).")
+        return
 
     cookie_path = pathlib.Path(args.cookie_file) if args.cookie_file else pathlib.Path(
         "cookies.txt"
@@ -522,8 +590,10 @@ def main() -> None:
                 output_dir,
                 summary_path,
                 cookie_path=cookie_path,
+                print_output=args.print_output,
             )
-            logger.info("Single video processing completed. Subtitle located in %s", output_dir / "final")
+            if not args.print_output:
+                logger.info("Single video processing completed. Subtitle located in %s", output_dir / "final")
         except Exception as exc:
             logger.error("Failed to process video %s: %s", args.video_url, exc)
 
