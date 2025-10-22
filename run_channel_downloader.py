@@ -140,7 +140,7 @@ def write_summary_row(summary_path: pathlib.Path, row: List[str]) -> None:
                     "title",
                     "url",
                     "upload_date",
-                    "transcript_path",
+                    "subtitle_path",
                     "languages",
                 ]
             )
@@ -197,7 +197,7 @@ def determine_languages(info: Dict) -> List[str]:
     return unique[:1]
 
 
-def build_transcript(
+def build_subtitle(
     info: Dict,
     video_dir: pathlib.Path,
     final_dir: pathlib.Path,
@@ -214,7 +214,7 @@ def build_transcript(
         lang = parts[-1] if len(parts) > 1 else "unknown"
         language_to_path[lang] = vtt_file
 
-    transcript_sections = []
+    subtitle_sections = []
     used_languages: List[str] = []
     for lang in collect_language_order(language_to_path.keys()):
         vtt_path = language_to_path[lang]
@@ -229,13 +229,13 @@ def build_transcript(
             continue
         text_content = txt_path.read_text(encoding="utf-8").strip()
         if not text_content:
-            logger.debug("Skipping empty transcript for %s", txt_path)
+            logger.debug("Skipping empty subtitle for %s", txt_path)
             continue
-        transcript_sections.append((lang, text_content))
+        subtitle_sections.append((lang, text_content))
         used_languages.append(lang)
 
-    if not transcript_sections:
-        logger.warning("All transcripts empty or unavailable for %s", video_url)
+    if not subtitle_sections:
+        logger.warning("All subtitles empty or unavailable for %s", video_url)
         return None, []
 
     final_dir.mkdir(parents=True, exist_ok=True)
@@ -257,13 +257,13 @@ def build_transcript(
         header.append(f"Channel: {info['channel']}")
 
     lines = header + [""]
-    for lang, text_content in transcript_sections:
-        lines.append(f"--- Transcript ({lang}) ---")
+    for lang, text_content in subtitle_sections:
+        lines.append(f"--- Subtitle ({lang}) ---")
         lines.append(text_content)
         lines.append("")
 
     final_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    logger.info("Transcript saved to %s", final_path)
+    logger.info("Subtitle saved to %s", final_path)
     unique_languages = list(dict.fromkeys(used_languages))
     return final_path, unique_languages
 
@@ -351,9 +351,9 @@ def process_single_video(
         video_dir.mkdir(parents=True, exist_ok=True)
 
     final_dir = output_dir / "final"
-    transcript_path, languages = build_transcript(info, video_dir, final_dir, video_url)
+    subtitle_path, languages = build_subtitle(info, video_dir, final_dir, video_url)
 
-    if transcript_path:
+    if subtitle_path:
         language_list = languages or requested_languages or sorted(
             {path.stem.split(".")[-1] for path in video_dir.glob("*.vtt")}
         )
@@ -364,23 +364,93 @@ def process_single_video(
                 info.get("title") or entry.get("title") or "",
                 info.get("webpage_url") or video_url,
                 format_upload_date(info.get("upload_date")),
-                str(transcript_path.relative_to(output_dir)),
+                str(subtitle_path.relative_to(output_dir)),
                 ",".join(language_list),
             ],
         )
     else:
-        logger.warning("Skipping summary entry for %s due to missing transcript", video_url)
+        logger.warning("Skipping summary entry for %s due to missing subtitle", video_url)
 
     cleanup_intermediate_dir(video_dir)
 
 
+def get_channel_from_video(video_url: str, *, cookie_path: pathlib.Path) -> Optional[str]:
+    """Extract channel name from a video URL."""
+    try:
+        metadata_opts = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        ensure_cookiefile(metadata_opts, cookie_path)
+
+        with yt_dlp.YoutubeDL(metadata_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            channel = info.get("channel") or info.get("uploader")
+            if channel:
+                return channel
+    except Exception as exc:
+        logger.warning("Failed to extract channel from video %s: %s", video_url, exc)
+
+    return None
+
+
+def get_existing_video_ids(summary_path: pathlib.Path) -> set:
+    """Read existing CSV and return set of video IDs already processed."""
+    if not summary_path.exists():
+        return set()
+
+    existing_ids = set()
+    try:
+        with summary_path.open("r", encoding="utf-8", newline="") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                video_id = row.get("video_id")
+                if video_id:
+                    existing_ids.add(video_id)
+        logger.debug("Found %s existing video IDs in summary", len(existing_ids))
+    except Exception as exc:
+        logger.warning("Failed to read existing summary %s: %s", summary_path, exc)
+
+    return existing_ids
+
+
+def filter_new_videos(entries: List[Dict], existing_ids: set) -> List[Dict]:
+    """Return only videos not in existing_ids."""
+    if not existing_ids:
+        return entries
+
+    new_entries = [e for e in entries if e.get("id") not in existing_ids]
+    skipped = len(entries) - len(new_entries)
+    if skipped > 0:
+        logger.info("Skipping %s already processed videos", skipped)
+    return new_entries
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download YouTube subtitles and build transcripts from a channel."
+        description="Download YouTube subtitles from a channel or single video.",
+        epilog="Examples:\n"
+               "  %(prog)s -c DanKoeTalks --limit 10\n"
+               "  %(prog)s -v https://youtube.com/watch?v=abc123\n"
+               "  %(prog)s -c ChannelName --full",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "channel_name",
+        "-c", "--channel",
+        dest="channel_name",
         help="Channel handle (with or without leading @).",
+    )
+    parser.add_argument(
+        "-v", "--video",
+        dest="video_url",
+        help="Download subtitles from a single video URL.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Process only the first N videos from channel (default: 0 = no limit).",
     )
     parser.add_argument(
         "--log-level",
@@ -388,22 +458,21 @@ def parse_args() -> argparse.Namespace:
         help="Logging level (default: INFO).",
     )
     parser.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Process only the first N videos (0 means no limit).",
-    )
-    parser.add_argument(
         "--output-dir",
-        help="Optional destination directory for transcripts (defaults to all-transcript-from-<channel>).",
+        help="Destination directory for subtitles (defaults to from-channel-<channel>).",
     )
     parser.add_argument(
         "--cookie-file",
-        help="Optional cookies file path (defaults to ./cookies.txt).",
+        help="Path to cookies.txt file (default: ./cookies.txt).",
     )
     parser.add_argument(
         "--urls-file",
-        help="Optional path for the intermediate playlist file (defaults to <channel>-list.txt inside the output dir).",
+        help="Path for the intermediate playlist file (defaults to <channel>-list.txt).",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Force full re-download of all videos, ignoring existing subtitles.",
     )
     return parser.parse_args()
 
@@ -411,6 +480,59 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     configure_logging(args.log_level)
+
+    cookie_path = pathlib.Path(args.cookie_file) if args.cookie_file else pathlib.Path(
+        "cookies.txt"
+    )
+
+    # Single video mode
+    if args.video_url:
+        logger.info("Single video mode: %s", args.video_url)
+
+        # Extract or use provided channel name
+        if args.channel_name:
+            try:
+                channel_slug = normalize_channel_name(args.channel_name)
+            except ValueError as exc:
+                logger.error("%s", exc)
+                return
+        else:
+            # Try to extract channel from video metadata
+            logger.info("Extracting channel name from video metadata...")
+            channel_name = get_channel_from_video(args.video_url, cookie_path=cookie_path)
+            if not channel_name:
+                logger.error("Could not determine channel name. Please provide -c/--channel.")
+                return
+            channel_slug = sanitize_filename(channel_name)
+            logger.info("Detected channel: %s", channel_slug)
+
+        output_dir = pathlib.Path(args.output_dir) if args.output_dir else pathlib.Path(
+            f"from-channel-{channel_slug}"
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_path = output_dir / "subtitles_summary.csv"
+
+        # Create a minimal entry dict for the single video
+        entry = {"url": args.video_url, "id": None, "title": None}
+
+        try:
+            process_single_video(
+                entry,
+                output_dir,
+                summary_path,
+                cookie_path=cookie_path,
+            )
+            logger.info("Single video processing completed. Subtitle located in %s", output_dir / "final")
+        except Exception as exc:
+            logger.error("Failed to process video %s: %s", args.video_url, exc)
+
+        return
+
+    # Channel mode
+    if not args.channel_name:
+        logger.error("Either -c/--channel or -v/--video must be provided.")
+        return
 
     try:
         channel_slug = normalize_channel_name(args.channel_name)
@@ -420,10 +542,7 @@ def main() -> None:
     channel_url = f"https://www.youtube.com/@{channel_slug}/videos"
 
     output_dir = pathlib.Path(args.output_dir) if args.output_dir else pathlib.Path(
-        f"all-transcript-from-{channel_slug}"
-    )
-    cookie_path = pathlib.Path(args.cookie_file) if args.cookie_file else pathlib.Path(
-        "cookies.txt"
+        f"from-channel-{channel_slug}"
     )
 
     if args.urls_file:
@@ -436,6 +555,8 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     urls_file.parent.mkdir(parents=True, exist_ok=True)
 
+    summary_path = output_dir / "subtitles_summary.csv"
+
     logger.info(
         "Starting YouTube channel subtitle downloader for @%s", channel_slug
     )
@@ -444,6 +565,21 @@ def main() -> None:
     if not entries:
         logger.error("No entries retrieved; exiting.")
         return
+
+    # Incremental mode: filter out already processed videos
+    if not args.full:
+        existing_ids = get_existing_video_ids(summary_path)
+        if existing_ids:
+            logger.info("Incremental mode: filtering already processed videos")
+            entries = filter_new_videos(entries, existing_ids)
+            if not entries:
+                logger.info("No new videos to process.")
+                return
+    else:
+        logger.info("Full mode: processing all videos")
+        if summary_path.exists():
+            summary_path.unlink()
+            logger.info("Existing summary file deleted")
 
     limit = args.limit if args.limit and args.limit > 0 else None
     if limit:
@@ -454,10 +590,6 @@ def main() -> None:
         for entry in entries:
             fh.write(f"{entry['url']}\n")
     logger.info("Saved %s video URLs to %s", len(entries), urls_file)
-
-    summary_path = output_dir / "transcripts_summary.csv"
-    if summary_path.exists():
-        summary_path.unlink()
 
     for idx, entry in enumerate(entries, start=1):
         logger.info("[%s/%s] %s", idx, len(entries), entry.get("title") or entry["url"])
@@ -471,7 +603,7 @@ def main() -> None:
         except Exception as exc:
             logger.error("Failed to process %s: %s", entry["url"], exc)
 
-    logger.info("All tasks completed. Transcripts located in %s", output_dir / "final")
+    logger.info("All tasks completed. Subtitles located in %s", output_dir / "final")
 
 
 if __name__ == "__main__":
