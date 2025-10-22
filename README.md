@@ -9,7 +9,21 @@ Inspired by the scripts used in https://www.youtube.com/watch?v=ND_87nkh-sI
 - `cookies.txt` exported from your browser (needed so YouTube serves subtitles reliably)
 
 ### Set Up A Virtual Environment
-Creating an isolated environment keeps dependencies contained. From the project root:
+
+**Option 1: Using `uv` (recommended - faster, no activation needed)**
+
+```bash
+# Install uv if you don't have it: https://docs.astral.sh/uv/
+uv venv
+uv pip install yt-dlp
+```
+
+With `uv`, you can run commands directly without activating:
+```bash
+uv run python3 run_channel_downloader.py DanKoeTalks --limit 10
+```
+
+**Option 2: Using standard Python venv**
 
 ```bash
 python3 -m venv .venv
@@ -20,8 +34,6 @@ pip install yt-dlp
 
 When you are done, deactivate with `deactivate`.
 
-> Already have a venv? Just run `pip install yt-dlp` inside it to pull the lone dependency.
-
 ### Exporting `cookies.txt`
 1. Install the Chrome extension **Get cookies.txt LOCALLY** (from the Chrome Web Store).
 2. Open the target YouTube channel in Chrome, ensure you are signed in, and let the page finish loading.
@@ -30,16 +42,21 @@ When you are done, deactivate with `deactivate`.
 
 ## Usage
 
+> **Note:** If using `uv`, prefix commands with `uv run`. Otherwise, activate your venv first.
+
 ### Download from a Channel (Incremental)
 
 By default, the script operates in **incremental mode**, downloading only new videos that haven't been processed yet:
 
 ```bash
-# First run - downloads all videos (or up to --limit)
+# Using uv (no activation needed)
+uv run python3 run_channel_downloader.py DanKoeTalks --limit 10 --log-level INFO
+
+# Or with activated venv
 python3 run_channel_downloader.py DanKoeTalks --limit 10 --log-level INFO
 
 # Second run - only downloads new videos since last run
-python3 run_channel_downloader.py DanKoeTalks
+uv run python3 run_channel_downloader.py DanKoeTalks
 ```
 
 ### Download from a Single Video
@@ -48,10 +65,10 @@ Download subtitles from a single video and add it to the channel's output folder
 
 ```bash
 # With channel name specified
-python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc123" --channel-name DanKoeTalks
+uv run python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc123" --channel-name DanKoeTalks
 
 # Auto-detect channel from video metadata
-python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc123"
+uv run python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc123"
 ```
 
 ### Force Full Re-download
@@ -59,7 +76,7 @@ python3 run_channel_downloader.py --video-url "https://youtube.com/watch?v=abc12
 Use `--full` to re-download all videos, ignoring existing subtitles:
 
 ```bash
-python3 run_channel_downloader.py DanKoeTalks --full
+uv run python3 run_channel_downloader.py DanKoeTalks --full
 ```
 
 ### Arguments
