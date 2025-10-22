@@ -192,21 +192,16 @@ def determine_languages(info: Dict) -> List[str]:
             languages.add("en")
 
     ordered = collect_language_order(sorted(languages))
-    # Preserve insertion order while removing duplicates, but keep only the highest priority language.
-    unique = list(dict.fromkeys(ordered))
-    return unique[:1]
+    return ordered[:1]
 
 
-def build_subtitle(
-    info: Dict,
-    video_dir: pathlib.Path,
-    final_dir: pathlib.Path,
-    video_url: str,
-) -> Tuple[Optional[pathlib.Path], List[str]]:
+def gather_subtitle_sections(
+    video_dir: pathlib.Path, video_url: str
+) -> Tuple[List[Tuple[str, str]], List[str]]:
     vtt_files = sorted(video_dir.glob("*.vtt"))
     if not vtt_files:
         logger.warning("No subtitle files were downloaded for %s", video_url)
-        return None, []
+        return [], []
 
     language_to_path: Dict[str, pathlib.Path] = {}
     for vtt_file in vtt_files:
@@ -214,7 +209,7 @@ def build_subtitle(
         lang = parts[-1] if len(parts) > 1 else "unknown"
         language_to_path[lang] = vtt_file
 
-    subtitle_sections = []
+    subtitle_sections: List[Tuple[str, str]] = []
     used_languages: List[str] = []
     for lang in collect_language_order(language_to_path.keys()):
         vtt_path = language_to_path[lang]
@@ -236,18 +231,15 @@ def build_subtitle(
 
     if not subtitle_sections:
         logger.warning("All subtitles empty or unavailable for %s", video_url)
-        return None, []
+        return [], []
 
-    final_dir.mkdir(parents=True, exist_ok=True)
-    author = info.get("channel") or info.get("uploader") or "Unknown"
-    title = info.get("title") or "Unknown Title"
-    filename = sanitize_filename(f"YouTube - {author} - {title}") or "YouTube-Unknown"
-    final_path = final_dir / f"{filename}.txt"
-    counter = 1
-    while final_path.exists():
-        final_path = final_dir / f"{filename} ({counter}).txt"
-        counter += 1
+    unique_languages = list(dict.fromkeys(used_languages))
+    return subtitle_sections, unique_languages
 
+
+def compose_subtitle_lines(
+    info: Dict, subtitle_sections: List[Tuple[str, str]], video_url: str
+) -> List[str]:
     header = [
         f"Title: {info.get('title') or 'Unknown'}",
         f"URL: {info.get('webpage_url') or video_url}",
@@ -261,11 +253,33 @@ def build_subtitle(
         lines.append(f"--- Subtitle ({lang}) ---")
         lines.append(text_content)
         lines.append("")
+    return lines
 
+
+def build_subtitle(
+    info: Dict,
+    video_dir: pathlib.Path,
+    final_dir: pathlib.Path,
+    video_url: str,
+) -> Tuple[Optional[pathlib.Path], List[str]]:
+    subtitle_sections, languages = gather_subtitle_sections(video_dir, video_url)
+    if not subtitle_sections:
+        return None, []
+
+    final_dir.mkdir(parents=True, exist_ok=True)
+    author = info.get("channel") or info.get("uploader") or "Unknown"
+    title = info.get("title") or "Unknown Title"
+    filename = sanitize_filename(f"YouTube - {author} - {title}") or "YouTube-Unknown"
+    final_path = final_dir / f"{filename}.txt"
+    counter = 1
+    while final_path.exists():
+        final_path = final_dir / f"{filename} ({counter}).txt"
+        counter += 1
+
+    lines = compose_subtitle_lines(info, subtitle_sections, video_url)
     final_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     logger.info("Subtitle saved to %s", final_path)
-    unique_languages = list(dict.fromkeys(used_languages))
-    return final_path, unique_languages
+    return final_path, languages
 
 
 def process_single_video(
@@ -303,12 +317,11 @@ def process_single_video(
             "ignoreerrors": True,
             "quiet": True,
             "no_warnings": True,
-            "outtmpl": {
-                "default": template,
-                "subtitle": template,
-            },
+            "outtmpl": {"subtitle": template},
             "overwrites": True,
         }
+
+        ensure_cookiefile(base_download_opts, cookie_path)
 
         video_id_local = info.get("id")
         if video_id_local:
@@ -321,7 +334,6 @@ def process_single_video(
         for lang in languages:
             lang_opts = dict(base_download_opts)
             lang_opts["subtitleslangs"] = [lang]
-            ensure_cookiefile(lang_opts, cookie_path)
             try:
                 with yt_dlp.YoutubeDL(lang_opts) as ydl:
                     ydl.download([video_url])
@@ -353,55 +365,10 @@ def process_single_video(
 
     # Handle print-to-stdout mode
     if print_output:
-        vtt_files = sorted(video_dir.glob("*.vtt"))
-        if not vtt_files:
-            logger.warning("No subtitle files were downloaded for %s", video_url)
-        else:
-            # Convert VTT files to text
-            language_to_path: Dict[str, pathlib.Path] = {}
-            for vtt_file in vtt_files:
-                parts = vtt_file.stem.split(".")
-                lang = parts[-1] if len(parts) > 1 else "unknown"
-                language_to_path[lang] = vtt_file
-
-            subtitle_sections = []
-            for lang in collect_language_order(language_to_path.keys()):
-                vtt_path = language_to_path[lang]
-                try:
-                    vtt_to_txt(vtt_path)
-                except Exception as exc:
-                    logger.warning("Failed to convert %s: %s", vtt_path, exc)
-                    continue
-                txt_path = vtt_path.with_suffix(".txt")
-                if not txt_path.exists():
-                    logger.warning("Missing converted text for %s", vtt_path)
-                    continue
-                text_content = txt_path.read_text(encoding="utf-8").strip()
-                if not text_content:
-                    logger.debug("Skipping empty subtitle for %s", txt_path)
-                    continue
-                subtitle_sections.append((lang, text_content))
-
-            if not subtitle_sections:
-                logger.warning("All subtitles empty or unavailable for %s", video_url)
-            else:
-                # Format and print to stdout
-                author = info.get("channel") or info.get("uploader") or "Unknown"
-                header = [
-                    f"Title: {info.get('title') or 'Unknown'}",
-                    f"URL: {info.get('webpage_url') or video_url}",
-                    f"Upload Date: {format_upload_date(info.get('upload_date'))}",
-                ]
-                if info.get("channel"):
-                    header.append(f"Channel: {info['channel']}")
-
-                lines = header + [""]
-                for lang, text_content in subtitle_sections:
-                    lines.append(f"--- Subtitle ({lang}) ---")
-                    lines.append(text_content)
-                    lines.append("")
-
-                print("\n".join(lines).rstrip())
+        subtitle_sections, _ = gather_subtitle_sections(video_dir, video_url)
+        if subtitle_sections:
+            lines = compose_subtitle_lines(info, subtitle_sections, video_url)
+            print("\n".join(lines).rstrip())
 
         cleanup_intermediate_dir(video_dir)
         return
