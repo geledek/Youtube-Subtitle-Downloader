@@ -18,7 +18,7 @@ uv venv
 uv pip install yt-dlp
 ```
 
-With `uv`, you can run commands directly without activating:
+With `uv`, you can run commands directly without activating. For example:
 ```bash
 uv run python3 run_downloader.py -c DanKoeTalks --limit 10
 ```
@@ -49,33 +49,23 @@ When you are done, deactivate with `deactivate`.
 By default, the script operates in **incremental mode**, downloading only new videos that haven't been processed yet:
 
 ```bash
-# Using uv (no activation needed)
-uv run python3 run_downloader.py -c DanKoeTalks --limit 10
-
-# Or with activated venv
-python3 run_downloader.py -c DanKoeTalks --limit 10
-
-# Second run - only downloads new videos since last run
-uv run python3 run_downloader.py -c DanKoeTalks
-
-# Download all videos (no limit)
-uv run python3 run_downloader.py -c @ChannelName
+python3 run_downloader.py -c DanKoeTalks --limit 10   # process first 10 videos
+python3 run_downloader.py -c DanKoeTalks              # subsequent runs pull only new videos
+python3 run_downloader.py -c @ChannelName             # download all videos
 ```
+Prefix with `uv run` if you're using `uv`.
 
 ### Download from a Single Video
 
 Download subtitles from a single video and add it to the channel's output folder:
 
 ```bash
-# With channel name specified
-uv run python3 run_downloader.py -v "https://youtube.com/watch?v=abc123" -c DanKoeTalks
-
-# Auto-detect channel from video metadata
-uv run python3 run_downloader.py -v "https://youtube.com/watch?v=abc123"
-
-# Print subtitles to stdout instead of saving to file (single video only)
-uv run python3 run_downloader.py -v "https://youtube.com/watch?v=abc123" -p
+python3 run_downloader.py -v "https://youtube.com/watch?v=abc123"
 ```
+- Add `-c DanKoeTalks` to force the output into a specific channel folder.
+- Add `-p` to print the subtitle to stdout instead of writing a file (single video only).
+- Omit `-c` to auto-detect the channel from video metadata.
+Prefix with `uv run` if you're using `uv`.
 
 ### Force Full Re-download
 
