@@ -108,6 +108,21 @@ from-channel-<channel>/
 - The script currently saves only the highest-priority subtitle language (English preferred). Adjust `determine_languages` in `run_downloader.py` if you need multi-language subtitles.
 - Hitting rate limits (HTTP 429) typically means YouTube is throttling requests. Re-run after a short pause or provide fresh cookies.
 
+## Claude Skill Runner
+
+Need to trigger downloads from Claude (or any automation agent) without typing
+CLI commands? Use the skill wrapper:
+
+```bash
+python skills/download.py --input request.json --artifact-dir skill-artifacts
+```
+
+Provide a JSON payload (see `SKILL.md` for the schema) and the script will run
+`download_channel`/`download_single_video`, convert the resulting subtitles to
+Markdown, and emit either a single `.md` file or a `.zip` archive containing
+multiple Markdown files. This makes it trivial for Claude to fetch the
+finished subtitles as downloadable artifacts.
+
 ## Migration from Old Version
 
 If you have existing folders named `all-transcript-from-<channel>` from a previous version, you can:
