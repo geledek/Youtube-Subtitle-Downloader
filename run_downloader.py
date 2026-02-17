@@ -12,6 +12,13 @@ import yt_dlp
 
 from vtt2txt import process as vtt_to_txt
 
+try:
+    import whisper_transcribe
+
+    _whisper_available = True
+except ImportError:
+    _whisper_available = False
+
 logger = logging.getLogger("channel_downloader")
 
 AUTO_CAPTION_ALLOWLIST = {
@@ -140,8 +147,10 @@ def write_summary_row(summary_path: pathlib.Path, row: List[str]) -> None:
                     "title",
                     "url",
                     "upload_date",
+                    "duration",
                     "subtitle_path",
                     "languages",
+                    "subtitle_source",
                 ]
             )
         writer.writerow(row)
@@ -176,6 +185,48 @@ def cleanup_intermediate_dir(directory: pathlib.Path) -> None:
         logger.warning("Unable to remove intermediate directory %s: %s", directory, exc)
 
 
+def download_audio(
+    video_url: str,
+    video_dir: pathlib.Path,
+    video_id: str,
+    *,
+    cookie_path: pathlib.Path,
+) -> Optional[pathlib.Path]:
+    """Download audio from a video and extract to WAV format."""
+    audio_path = video_dir / f"{video_id}.wav"
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": str(video_dir / f"{video_id}.%(ext)s"),
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "wav",
+            }
+        ],
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    ensure_cookiefile(ydl_opts, cookie_path)
+
+    try:
+        def _download():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+
+        retry(_download)
+    except Exception as exc:
+        logger.warning("Failed to download audio for %s: %s", video_url, exc)
+        return None
+
+    if audio_path.exists():
+        return audio_path
+
+    logger.warning("Audio file not found at %s after download", audio_path)
+    return None
+
+
 def determine_languages(info: Dict) -> List[str]:
     languages = set()
     for lang in (info.get("subtitles") or {}).keys():
@@ -199,41 +250,50 @@ def gather_subtitle_sections(
     video_dir: pathlib.Path, video_url: str
 ) -> Tuple[List[Tuple[str, str]], List[str]]:
     vtt_files = sorted(video_dir.glob("*.vtt"))
-    if not vtt_files:
+    whisper_files = sorted(video_dir.glob("*.whisper-*.txt"))
+
+    if not vtt_files and not whisper_files:
         logger.warning("No subtitle files were downloaded for %s", video_url)
         return [], []
 
-    language_to_path: Dict[str, pathlib.Path] = {}
+    language_to_content: Dict[str, str] = {}
+
+    # Process VTT files
     for vtt_file in vtt_files:
         parts = vtt_file.stem.split(".")
         lang = parts[-1] if len(parts) > 1 else "unknown"
-        language_to_path[lang] = vtt_file
-
-    subtitle_sections: List[Tuple[str, str]] = []
-    used_languages: List[str] = []
-    for lang in collect_language_order(language_to_path.keys()):
-        vtt_path = language_to_path[lang]
         try:
-            vtt_to_txt(vtt_path)
+            vtt_to_txt(vtt_file)
         except Exception as exc:
-            logger.warning("Failed to convert %s: %s", vtt_path, exc)
+            logger.warning("Failed to convert %s: %s", vtt_file, exc)
             continue
-        txt_path = vtt_path.with_suffix(".txt")
+        txt_path = vtt_file.with_suffix(".txt")
         if not txt_path.exists():
-            logger.warning("Missing converted text for %s", vtt_path)
+            logger.warning("Missing converted text for %s", vtt_file)
             continue
         text_content = txt_path.read_text(encoding="utf-8").strip()
-        if not text_content:
-            logger.debug("Skipping empty subtitle for %s", txt_path)
-            continue
-        subtitle_sections.append((lang, text_content))
-        used_languages.append(lang)
+        if text_content:
+            language_to_content[lang] = text_content
 
-    if not subtitle_sections:
+    # Process Whisper files (only if VTT didn't provide that language)
+    for whisper_file in whisper_files:
+        match = re.search(r"\.whisper-(.+)$", whisper_file.stem)
+        if not match:
+            continue
+        lang = match.group(1)
+        if lang in language_to_content:
+            continue
+        text_content = whisper_file.read_text(encoding="utf-8").strip()
+        if text_content:
+            language_to_content[lang] = text_content
+
+    if not language_to_content:
         logger.warning("All subtitles empty or unavailable for %s", video_url)
         return [], []
 
-    unique_languages = list(dict.fromkeys(used_languages))
+    ordered = collect_language_order(language_to_content.keys())
+    subtitle_sections = [(lang, language_to_content[lang]) for lang in ordered]
+    unique_languages = list(dict.fromkeys(ordered))
     return subtitle_sections, unique_languages
 
 
@@ -289,13 +349,14 @@ def process_single_video(
     *,
     cookie_path: pathlib.Path,
     print_output: bool = False,
+    whisper_model: Optional[str] = None,
 ) -> None:
     video_url = entry["url"]
     logger.info("Processing video: %s", video_url)
 
     template = str(output_dir / "%(id)s" / "%(id)s.%(language)s.%(ext)s")
 
-    def _operation() -> Tuple[Dict, List[str]]:
+    def _operation() -> Tuple[Dict, List[str], str]:
         metadata_opts = {
             "skip_download": True,
             "quiet": True,
@@ -331,6 +392,7 @@ def process_single_video(
             target_dir.mkdir(parents=True, exist_ok=True)
 
         downloaded_languages: List[str] = []
+        subtitle_source = "none"
         for lang in languages:
             lang_opts = dict(base_download_opts)
             lang_opts["subtitleslangs"] = [lang]
@@ -340,8 +402,11 @@ def process_single_video(
                 downloaded_languages.append(lang)
                 if lang in info.get("subtitles", {}):
                     logger.debug("Downloaded subtitle (%s) for %s", lang, video_url)
+                    subtitle_source = "manual"
                 else:
                     logger.debug("Downloaded auto-caption (%s) for %s", lang, video_url)
+                    if subtitle_source != "manual":
+                        subtitle_source = "auto-caption"
             except Exception as exc:  # pragma: no cover - network resilience
                 logger.warning(
                     "Unable to download subtitles for %s (%s): %s", lang, video_url, exc
@@ -353,15 +418,47 @@ def process_single_video(
         if not downloaded_languages:
             logger.warning("No subtitles were downloaded for %s", video_url)
 
-        return info, downloaded_languages
+        return info, downloaded_languages, subtitle_source
 
-    info, requested_languages = retry(_operation)
+    info, requested_languages, subtitle_source = retry(_operation)
 
     video_id = info.get("id") or entry.get("id") or "unknown"
     video_dir = output_dir / video_id
     if not video_dir.exists():
         logger.warning("Expected download directory %s missing; creating manually", video_dir)
         video_dir.mkdir(parents=True, exist_ok=True)
+
+    # Whisper fallback: if no VTT files were downloaded, try transcription
+    if not list(video_dir.glob("*.vtt")) and whisper_model:
+        if _whisper_available:
+            logger.info("No subtitles found; attempting Whisper transcription for %s", video_url)
+            audio_path = download_audio(
+                video_url, video_dir, video_id, cookie_path=cookie_path
+            )
+            if audio_path:
+                try:
+                    text, detected_lang = whisper_transcribe.transcribe(
+                        audio_path, whisper_model
+                    )
+                    if text:
+                        whisper_file = video_dir / f"{video_id}.whisper-{detected_lang}.txt"
+                        whisper_file.write_text(text + "\n", encoding="utf-8")
+                        subtitle_source = "whisper"
+                        logger.info(
+                            "Whisper transcription saved (%s) for %s",
+                            detected_lang,
+                            video_url,
+                        )
+                    else:
+                        logger.warning("Whisper returned empty transcription for %s", video_url)
+                except Exception as exc:
+                    logger.warning("Whisper transcription failed for %s: %s", video_url, exc)
+        else:
+            logger.warning(
+                "Whisper not installed; skipping transcription fallback for %s. "
+                "Install with: pip install openai-whisper",
+                video_url,
+            )
 
     # Handle print-to-stdout mode
     if print_output:
@@ -381,6 +478,7 @@ def process_single_video(
         language_list = languages or requested_languages or sorted(
             {path.stem.split(".")[-1] for path in video_dir.glob("*.vtt")}
         )
+        duration = info.get("duration")
         write_summary_row(
             summary_path,
             [
@@ -388,8 +486,10 @@ def process_single_video(
                 info.get("title") or entry.get("title") or "",
                 info.get("webpage_url") or video_url,
                 format_upload_date(info.get("upload_date")),
+                str(int(duration)) if duration else "",
                 str(subtitle_path.relative_to(output_dir)),
                 ",".join(language_list),
+                subtitle_source,
             ],
         )
     else:
@@ -483,7 +583,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        help="Destination directory for subtitles (defaults to from-channel-<channel>).",
+        help="Destination directory for subtitles (defaults to downloads/from-channel-<channel>).",
     )
     parser.add_argument(
         "--cookie-file",
@@ -504,6 +604,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print subtitle to stdout instead of saving to file (single video mode only).",
     )
+    parser.add_argument(
+        "--whisper-model",
+        default="base",
+        choices=["tiny", "base", "small", "medium", "large"],
+        help="Whisper model size for transcription fallback (default: base).",
+    )
+    parser.add_argument(
+        "--no-whisper",
+        action="store_true",
+        help="Disable Whisper transcription fallback entirely.",
+    )
     return parser.parse_args()
 
 
@@ -519,6 +630,8 @@ def main() -> None:
     cookie_path = pathlib.Path(args.cookie_file) if args.cookie_file else pathlib.Path(
         "cookies.txt"
     )
+
+    whisper_model = None if args.no_whisper else args.whisper_model
 
     # Single video mode
     if args.video_url:
@@ -542,7 +655,7 @@ def main() -> None:
             logger.info("Detected channel: %s", channel_slug)
 
         output_dir = pathlib.Path(args.output_dir) if args.output_dir else pathlib.Path(
-            f"from-channel-{channel_slug}"
+            f"downloads/from-channel-{channel_slug}"
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -558,6 +671,7 @@ def main() -> None:
                 summary_path,
                 cookie_path=cookie_path,
                 print_output=args.print_output,
+                whisper_model=whisper_model,
             )
             if not args.print_output:
                 logger.info("Single video processing completed. Subtitle located in %s", output_dir / "final")
@@ -636,6 +750,7 @@ def main() -> None:
                 output_dir,
                 summary_path,
                 cookie_path=cookie_path,
+                whisper_model=whisper_model,
             )
         except Exception as exc:
             logger.error("Failed to process %s: %s", entry["url"], exc)
