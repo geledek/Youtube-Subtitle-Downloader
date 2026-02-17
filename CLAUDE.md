@@ -13,12 +13,14 @@ A command-line tool that downloads subtitles from YouTube channels or individual
 # Using uv (recommended - faster, no activation needed)
 uv venv
 uv pip install yt-dlp
+uv pip install openai-whisper  # optional: enables Whisper transcription fallback
 
 # Using standard venv
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install yt-dlp
+pip install openai-whisper  # optional
 ```
 
 ### Running the Downloader
@@ -47,11 +49,12 @@ python3 vtt2txt.py /path/to/directory  # processes all .vtt files recursively
 
 ### Two-Script Design
 
-1. **run_downloader.py** - Main orchestrator (645 lines)
+1. **run_downloader.py** - Main orchestrator
    - Entry point and command-line interface
    - Channel video discovery via yt-dlp flat extraction
    - Incremental download tracking via CSV
    - Subtitle download coordination (per-language)
+   - Whisper transcription fallback for videos without subtitles
    - File organization and metadata management
    - Retry logic with exponential backoff
 
@@ -61,6 +64,12 @@ python3 vtt2txt.py /path/to/directory  # processes all .vtt files recursively
    - Global deduplication of subtitle lines
    - Called by run_downloader.py after each subtitle download
 
+3. **whisper_transcribe.py** - Whisper transcription module
+   - Standalone utility that transcribes audio files using OpenAI Whisper
+   - Model caching (loaded once per session)
+   - Segment-level output for sentence-based line breaks
+   - CLI: `python3 whisper_transcribe.py audio.mp3 [model_name]`
+
 ### Data Flow
 
 ```
@@ -68,17 +77,18 @@ Channel URL → yt-dlp (flat) → Video list → Filter (incremental) → For ea
   1. Fetch metadata
   2. Determine subtitle languages (prefer en, then zh variants)
   3. Download VTT files (subtitles + auto-captions from allowlist)
-  4. Convert VTT → TXT via vtt2txt.py
-  5. Build final subtitle file with header (title, URL, date, channel)
-  6. Append row to subtitles_summary.csv
-  7. Clean up intermediate directory
+  4. If no subtitles found → Whisper fallback (download audio → transcribe)
+  5. Convert VTT → TXT via vtt2txt.py (or use Whisper .txt directly)
+  6. Build final subtitle file with header (title, URL, date, channel)
+  7. Append row to subtitles_summary.csv (with duration + subtitle_source)
+  8. Clean up intermediate directory
 ```
 
 ### Output Structure
 
-All outputs are written to `from-channel-<channel>/`:
+All outputs are written to `downloads/from-channel-<channel>/`:
 ```
-from-channel-<channel>/
+downloads/from-channel-<channel>/
 ├── final/
 │   └── YouTube - <channel> - <title>.txt  # final subtitle with metadata header
 ├── subtitles_summary.csv                   # CSV tracking all processed videos
@@ -91,7 +101,9 @@ from-channel-<channel>/
 
 - **Language selection**: `determine_languages()` (run_downloader.py:179) returns only the highest-priority language. Priority order: en variants → zh variants → other. Controlled by `AUTO_CAPTION_ALLOWLIST` (run_downloader.py:17).
 
-- **Single video mode**: Videos are added to the same `from-channel-<channel>/` structure. If no channel is provided via `-c`, the script extracts it from video metadata.
+- **Whisper fallback**: When no subtitles or auto-captions are available, the script downloads audio and transcribes with OpenAI Whisper. Controlled by `--whisper-model` (default: `base`) and `--no-whisper`. Requires `pip install openai-whisper` and ffmpeg.
+
+- **Single video mode**: Videos are added to the same `downloads/from-channel-<channel>/` structure. If no channel is provided via `-c`, the script extracts it from video metadata.
 
 - **Print mode (`-p`)**: Single video mode only. Prints subtitle to stdout and skips file creation. Useful for piping to other tools.
 
@@ -101,9 +113,16 @@ from-channel-<channel>/
 
 - **Deduplication**: `vtt2txt.py` uses a global `seen` set to remove duplicate subtitle lines within each video.
 
+### CSV Schema
+
+`subtitles_summary.csv` columns: `video_id`, `title`, `url`, `upload_date`, `duration`, `subtitle_path`, `languages`, `subtitle_source`
+
+The `subtitle_source` field is one of: `manual`, `auto-caption`, `whisper`, or `none`.
+
 ## Important Constraints
 
 - Only downloads one language per video (highest priority from `determine_languages`)
 - Auto-captions are only downloaded for languages in `AUTO_CAPTION_ALLOWLIST`
+- Whisper fallback requires `openai-whisper` and `ffmpeg`; gracefully skips if not installed
 - Rate limiting (HTTP 429) typically means YouTube is throttling; re-run after pause or refresh cookies
 - The script expects Python 3.9+ (3.10+ recommended by yt-dlp)
